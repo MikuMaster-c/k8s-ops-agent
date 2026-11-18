@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.venv/
+docs/
+eval/index.json
+eval/report.json

@@ -1,0 +1,32 @@
+# 故意保留两处"AI 会写错"的地方，用来复现坑，不要一次改完：
+#   1. startupProbe 缺失（复现 CrashLoopBackOff，坑一）
+#   2. limits.memory 过小（复现 OOMKilled，坑二）
+# 修复记录写进 chaos/README.md。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-ops
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: agent-ops }
+  template:
+    metadata:
+      labels: { app: agent-ops }
+    spec:
+      containers:
+        - name: agent
+          image: agent-ops:0.1.0
+          imagePullPolicy: IfNotPresent   # kind load 进去的镜像必须这样，否则回仓库拉
+          ports:
+            - containerPort: 8000
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits:   { cpu: "1", memory: 512Mi }
+          readinessProbe:
+            httpGet: { path: /docs, port: 8000 }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /docs, port: 8000 }
+            periodSeconds: 10
+            failureThreshold: 3

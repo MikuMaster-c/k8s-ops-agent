@@ -1,0 +1,18 @@
+[project]
+name = "agent-ops"
+version = "0.1.0"
+description = "K8s 运维诊断 Agent + 清单生成校验"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn",
+    "langgraph",
+    "langchain-core",
+    "langchain-text-splitters",
+    "langchain-ollama",
+    "pydantic>=2",
+    "numpy",
+    "pyyaml",
+    "redis>=5",
+    "pymysql>=1.1",
+]

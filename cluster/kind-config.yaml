@@ -1,0 +1,10 @@
+# 单节点足够：目标是把 Pod 跑起来并看见探针行为，不是模拟真实拓扑。
+# extraPortMappings 把 30000 映射到宿主机，方便从浏览器访问 Grafana。
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30000
+        hostPort: 30000
+        protocol: TCP
