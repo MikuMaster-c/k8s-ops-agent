@@ -93,3 +93,47 @@
   但改成编号引用后又发现 "OOMKilled 在 describe 的哪个字段" 被 `OOM` 误判进 kubectl。
   术语名本身就是概念题的题干，所以最终**只留"有没有 Pod 名"一个判据**。
   两轮修正都被数据推翻过一次，才收敛到最简单的那条规则
+
+## 2026-11-19 · 规则层拿全文包含匹配状态，路径和引文全错
+
+- **我让 AI 做什么**：从 `kubectl describe` 文本里摘异常状态，产出 evidence
+- **它给出的**：`if state in text` 的写法，理由是"简单直接"
+- **我验证的方式**：在 kind 里真跑出四个故障 Pod（`chaos/pods.yaml`），
+  拿真实 describe 输出逐条对
+- **它错在哪**：三处都错了。
+  ① `ErrImagePull` 命中 Events 里的 `Error: ErrImagePull`，source 指向
+  `state.waiting.reason` 但 quote 是事件行——格式合法所以评测不会失败，
+  只会让模型拿错证据；
+  ② `Pending` 命中 Pod 的 phase 行（`Status: Pending`），而无状态问题的 Pod 也是 Pending；
+  ③ 同一状态出现在 `State` 和 `Last State` 里被算成同一个字段路径，
+  但前者是 `state.*`、后者是 `lastState.*`
+- **我怎么改的**：只从 `State:` / `Last State:` 块里读 `Reason:`，正则解析后
+  **由块名推导路径前缀**（`Last State` → `lastState`），状态→子字段（waiting/terminated）
+  才留在映射表里。另加一条 `events[probe-failed]`：探针失败时容器 State 仍是 Running，
+  状态匹配永远看不到它
+
+## 2026-11-19 · 校验器自己成了假阳性的来源
+
+- **我让 AI 做什么**：`checks.py` 校验生成的 Deployment 有没有 `runAsNonRoot`
+- **它给出的**：`sc = c.get("securityContext") or {}`，只查容器层
+- **我验证的方式**：三条 manifest 用例全场挂同一条，看 `generate()` 的 history
+  发现两轮问题原样重复；再看模型原始输出
+- **它错在哪**：模型把 `securityContext` 写在 **Pod 层**
+  （`spec.template.spec.securityContext`），这是合法且更简洁的写法（继承给所有容器）。
+  校验器不认，判它"未声明"，于是重生成陷进死循环——不是模型修不好，
+  是根本没东西可修
+- **我怎么改的**：容器层没写就看 Pod 层，两层都没写才算缺。7B 从 13/20 涨到 15/20，
+  P50 从 8.1s 降到 7.3s（少了无意义的重生成）。**校验器写错比模型写错更危险**，
+  因为它会让整个自愈循环空转还看起来在工作
+
+## 2026-11-19 · 一句"verdict 别写编号"让通过率掉了 6 条
+
+- **我让 AI 做什么**：修 c02 里 `verdict` 只输出 `[0]` 的问题
+- **它给出的**：在 prompt 里加一句"verdict 用一句话中文直接回答，不要写编号"
+- **我验证的方式**：连跑 4 次确认稳定复现，排除了随机波动
+- **它错在哪**：加了这句之后 7B 从 15/20 掉到 9/20，失败集中在
+  "未给出任何引用"——模型把注意力转到 verdict 格式上，citation 整个丢掉了。
+  改 prompt 的副作用会打到别的字段，这在小模型上尤其明显
+- **我怎么改的**：回退这句，4/4 复测引用恢复、全量回到 15/20。
+  这次没找到零代价的修法，就把 `verdict` 偶发只写编号记为已知问题，不改。
+  **"改了一处、坏了一处"要用同一批用例全量复测，不能只测改的那一条**

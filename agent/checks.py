@@ -8,13 +8,22 @@ from typing import Any
 
 
 def checks(doc: dict) -> list[str]:
-    """输入一个 Deployment 的 dict，返回问题列表。空列表 = 通过。"""
+    """输入一个 Deployment 的 dict，返回问题列表。空列表 = 通过。
+
+    securityContext 在 Pod 层和容器层都合法：Pod 层的会继承给所有容器，
+    小服务写在 Pod 层是更简洁的写法。第一版只查容器层，把这种正确写法误判成
+    "未声明 runAsNonRoot"——校验器自己成了假阳性的来源，比模型写错更糟，
+    因为它会让重生成去"修"一个本来就对的东西（实测两轮都没修好，因为无从修起）。
+    """
     problems: list[str] = []
-    spec = (doc.get("spec") or {}).get("template", {}).get("spec", {})
-    containers = spec.get("containers") or []
+    pod_spec = (doc.get("spec") or {}).get("template", {}).get("spec", {})
+    containers = pod_spec.get("containers") or []
 
     if not containers:
         return ["spec.template.spec.containers 为空"]
+
+    # Pod 层的 securityContext 对所有容器生效
+    pod_sc = pod_spec.get("securityContext") or {}
 
     for c in containers:
         name = c.get("name", "?")
@@ -40,7 +49,8 @@ def checks(doc: dict) -> list[str]:
                 f"{name}: 有 liveness 无 startup——启动慢的服务会被反复杀死（CrashLoopBackOff 的经典成因）"
             )
 
-        sc = c.get("securityContext") or {}
+        # 容器层没写就看 Pod 层；两层都没写才算缺
+        sc = c.get("securityContext") or pod_sc
         if not sc.get("runAsNonRoot"):
             problems.append(f"{name}: 未声明 runAsNonRoot")
         if sc.get("allowPrivilegeEscalation"):

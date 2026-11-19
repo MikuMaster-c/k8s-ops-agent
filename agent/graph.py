@@ -63,8 +63,8 @@ def gather_incident(state: State) -> State:
 # 结论：改措辞不管用（三种写法分别 7/12、6/12、1/12），真正的解法是改结构。
 INSTRUCTIONS = (
     "你是 Kubernetes 排障助手。只能依据下面的证据作答。\n"
-    "citations 至少给出 1 条，每条只填 evidence（证据前的方括号数字，从 0 开始）"
-    "和 why（这条证据支持了哪个结论）。不要复制原文，原文由程序填。\n"
+    "citations 至少给出 1 条，evidence 填证据前的方括号数字（从 0 开始），"
+    "why 说明这条证据支持了哪个结论。不要复制原文，原文由程序填。\n"
 )
 
 
