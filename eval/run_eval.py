@@ -18,23 +18,28 @@ from agent.manifest import generate
 CASES = Path(__file__).parent / "cases.jsonl"
 
 
-def evaluate_case(case: dict) -> dict:
+def evaluate_case(case: dict, model: str | None = None) -> dict:
     if case["kind"] == "manifest":
-        out = generate(case["requirement"])
+        out = generate(case["requirement"], model=model)
         problems = checks(out["manifest"])
         hit = any(k in json.dumps(out["manifest"], ensure_ascii=False) for k in case["expect_keywords"])
         return {"id": case["id"], "pass": not problems and hit, "detail": problems or "ok"}
 
-    out = run(case["question"], case.get("pod", ""))
+    out = run(case["question"], case.get("pod", ""), model=model)
     d = out.get("diagnosis") or {}
     text = json.dumps(d, ensure_ascii=False)
-    no_bad = not out.get("problems")
+    problems = out.get("problems") or []
     hit = any(k.lower() in text.lower() for k in case["expect_keywords"])
-    return {
-        "id": case["id"],
-        "pass": bool(no_bad and hit and d),
-        "detail": "citation 越界" if not no_bad else ("未命中关键词" if not hit else "ok"),
-    }
+    # 失败原因要能区分：引用越界 / quote 转述 / 关键词没答到，三种修法完全不同
+    if problems:
+        detail = problems[0]
+    elif not hit:
+        detail = "未命中关键词"
+    elif not d:
+        detail = "无诊断输出"
+    else:
+        detail = "ok"
+    return {"id": case["id"], "pass": bool(not problems and hit and d), "detail": detail}
 
 
 def main() -> None:

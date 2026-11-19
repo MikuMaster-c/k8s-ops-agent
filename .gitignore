@@ -4,3 +4,4 @@ __pycache__/
 docs/
 eval/index.json
 eval/report.json
+eval/compare.json

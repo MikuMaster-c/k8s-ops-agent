@@ -34,11 +34,21 @@ def put_text(key: str, text: str, ttl: int = 30) -> None:
 
 
 def cached_describe(pod: str, namespace: str, fetch) -> str:
-    """fetch 是被缓存的取数函数；缓存层不认识 kubectl。"""
+    """fetch 是被缓存的取数函数；缓存层不认识 kubectl。
+
+    Redis 挂掉时直接走 fetch：缓存是加速手段，不能变成诊断链路的前提。
+    这里只包 try/except 不加重试——重试解决不了 Redis 没起来，只会拖慢故障响应。
+    """
     key = f"{namespace}/{pod}"
-    hit = get_text(key)
-    if hit is not None:
-        return hit
+    try:
+        hit = get_text(key)
+        if hit is not None:
+            return hit
+    except Exception:
+        return fetch(pod, namespace)
     text = fetch(pod, namespace)
-    put_text(key, text)
+    try:
+        put_text(key, text)
+    except Exception:
+        pass  # 写不进去不影响这次结果
     return text

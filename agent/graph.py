@@ -13,7 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from agent import cache, rules, tools
 from agent.llm import llm
 from agent.rag import search
-from agent.schema import Diagnosis, Evidence, bad_citations
+from agent.schema import Diagnosis, Evidence, bad_citations, resolve
 
 MAX_STEPS = 8  # 含 LLM 调用在内的总步数上限
 
@@ -21,6 +21,7 @@ MAX_STEPS = 8  # 含 LLM 调用在内的总步数上限
 class State(TypedDict, total=False):
     question: str
     pod: str
+    model: str                               # 留空 = llm.CHAT_MODEL；只有对照实验会指定别的
     kind: Literal["knowledge", "incident"]   # 检索型 / 排障型
     evidence: list[dict]                     # [{source, quote, hint}]
     diagnosis: dict
@@ -28,11 +29,17 @@ class State(TypedDict, total=False):
 
 
 def classify(state: State) -> State:
-    """不调模型：用关键词分流，省一次往返，也更容易测。"""
-    q = state["question"]
-    incident_words = ("为什么", "崩", "重启", "pending", "错误", "失败", "OOM", "crash")
-    kind = "incident" if any(w.lower() in q.lower() for w in incident_words) else "knowledge"
-    return {"kind": kind}
+    """不调模型：用关键词分流，省一次往返，也更容易测。
+
+    分界只有一个判据：**有没有 Pod 名**。
+
+    这里试过两版更"聪明"的规则，都被评测推翻了：
+      - 把"为什么"当故障信号 → "为什么必须配 startupProbe"这类概念题被送去跑 kubectl
+      - 把"OOM/重启"等术语当故障信号 → "OOMKilled 在哪个字段"同样被误判，
+        因为这些词本身就是概念题的题干
+    疑问词和术语名都说明不了该查哪里，只有"用户指了哪个 Pod"能。
+    """
+    return {"kind": "incident" if state.get("pod") else "knowledge"}
 
 
 def gather_knowledge(state: State) -> State:
@@ -50,17 +57,28 @@ def gather_incident(state: State) -> State:
     return {"evidence": found}
 
 
+# prompt 单独抽成模块常量，是为了能在同一批用例上对比不同措辞的影响。
+# 引用转述问题就是靠这个变量做 A/B 才定位清楚的——不给 prompt 留一个可替换的点，
+# 就只能靠"感觉改好了"，而评测要的恰恰不是感觉。
+# 结论：改措辞不管用（三种写法分别 7/12、6/12、1/12），真正的解法是改结构。
+INSTRUCTIONS = (
+    "你是 Kubernetes 排障助手。只能依据下面的证据作答。\n"
+    "citations 至少给出 1 条，每条只填 evidence（证据前的方括号数字，从 0 开始）"
+    "和 why（这条证据支持了哪个结论）。不要复制原文，原文由程序填。\n"
+)
+
+
+def build_prompt(question: str, evidence: list[Evidence]) -> str:
+    block = "\n\n".join(f"[{i}] {e.source}\n{e.quote}\n提示：{e.hint}" for i, e in enumerate(evidence))
+    return f"{INSTRUCTIONS}\n{block}\n\n问题：{question}"
+
+
 def diagnose(state: State) -> State:
     evidence = [Evidence(**e) for e in state["evidence"]]
-    block = "\n\n".join(f"[{e.source}]\n{e.quote}\n提示：{e.hint}" for e in evidence)
-    prompt = (
-        "你是 Kubernetes 排障助手。只能依据下面的证据作答，"
-        "每条结论都必须给出 citation，citation.source 必须是下列方括号中的路径之一。\n\n"
-        f"{block}\n\n问题：{state['question']}"
-    )
-    result = llm().with_structured_output(Diagnosis).invoke(prompt)
-    problems = bad_citations(result, evidence)
-    return {"diagnosis": result.model_dump(), "problems": problems}
+    prompt = build_prompt(state["question"], evidence)
+    result = llm(model=state.get("model")).with_structured_output(Diagnosis).invoke(prompt)
+    problems = [f"证据编号越界: {s}" for s in bad_citations(result, evidence)]
+    return {"diagnosis": resolve(result, evidence), "problems": problems}
 
 
 def route(state: State) -> str:
@@ -85,8 +103,8 @@ def build():
 APP = build()
 
 
-def run(question: str, pod: str = "") -> dict:
+def run(question: str, pod: str = "", model: str | None = None) -> dict:
     return APP.invoke(
-        {"question": question, "pod": pod, "evidence": []},
+        {"question": question, "pod": pod, "model": model or "", "evidence": []},
         config={"recursion_limit": MAX_STEPS},
     )

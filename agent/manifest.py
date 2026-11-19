@@ -14,14 +14,14 @@ SYSTEM = """你输出 Kubernetes Deployment YAML，只输出 YAML，不加解释
 readinessProbe、livenessProbe、securityContext.runAsNonRoot: true。"""
 
 
-def generate(requirement: str, rounds: int = 2) -> dict:
+def generate(requirement: str, rounds: int = 2, model: str | None = None) -> dict:
     history = []
     problems: list[str] = []
     doc: dict = {}
 
     for i in range(rounds):
         hint = "" if not problems else "\n上一版存在以下问题，逐条修正：\n" + "\n".join(f"- {p}" for p in problems)
-        raw = llm().invoke(f"{SYSTEM}\n\n需求：{requirement}{hint}").content
+        raw = llm(model=model).invoke(f"{SYSTEM}\n\n需求：{requirement}{hint}").content
         doc = _parse(raw)
         problems = checks(doc)
         history.append({"round": i + 1, "problems": problems, "score": summarize(problems)})
