@@ -1,4 +1,4 @@
-# agent-ops
+# k8s-ops-agent
 
 一个跑在它自己要观测的集群上的 K8s 运维诊断 Agent。两层：
 
